@@ -1,0 +1,45 @@
+{
+	"name": "directus-extension-ai-auto-field",
+	"version": "1.0.0",
+	"description": "Directus extension for automatic AI field generation",
+	"author": "Directus",
+	"license": "MIT",
+	"type": "module",
+	"directus:extension": {
+		"type": "bundle",
+		"host": "^10.10.0",
+		"path": {
+			"app": "dist/app.js",
+			"api": "dist/api.js"
+		},
+		"entries": [
+			{
+				"type": "interface",
+				"name": "ai-auto-field",
+				"source": "src/interfaces/ai-auto-field/index.ts"
+			},
+			{
+				"type": "hook",
+				"name": "ai-auto-field-hook",
+				"source": "src/hooks/ai-auto-field/index.ts"
+			}
+		]
+	},
+	"scripts": {
+		"build": "directus-extension build",
+		"dev": "directus-extension build -w --no-minify"
+	},
+	"devDependencies": {
+		"@directus/extensions-sdk": "workspace:*",
+		"typescript": "catalog:",
+		"vue": "catalog:"
+	},
+	"dependencies": {
+		"@ai-sdk/google": "catalog:",
+		"@ai-sdk/openai": "catalog:",
+		"@ai-sdk/openai-compatible": "catalog:",
+		"@directus/ai": "workspace:*",
+		"@directus/types": "workspace:*",
+		"ai": "catalog:"
+	}
+}
