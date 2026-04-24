@@ -1,8 +1,8 @@
 import { defineHook } from '@directus/extensions-sdk';
 import type { FilterHandler, AbstractServiceOptions } from '@directus/types';
-import type { ProviderType } from '@directus/ai';
-import type { OpenAICompatibleHeader, OpenAICompatibleModel } from '@directus/ai';
+import type { ProviderType, OpenAICompatibleHeader, OpenAICompatibleModel } from '@directus/ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createProviderRegistry, streamText } from 'ai';
@@ -43,151 +43,76 @@ interface FieldWithMeta {
 	} | null;
 }
 
-function buildProviderConfigs(settings: AISettings) {
-	const configs = [];
-
-	if (settings.openaiApiKey) {
-		configs.push({
-			type: 'openai' as const,
-			apiKey: settings.openaiApiKey,
-		});
-	}
-
-	if (settings.anthropicApiKey) {
-		configs.push({
-			type: 'anthropic' as const,
-			apiKey: settings.anthropicApiKey,
-		});
-	}
-
-	if (settings.googleApiKey) {
-		configs.push({
-			type: 'google' as const,
-			apiKey: settings.googleApiKey,
-		});
-	}
-
-	if (settings.openaiCompatibleApiKey && settings.openaiCompatibleBaseUrl) {
-		configs.push({
-			type: 'openai-compatible' as const,
-			apiKey: settings.openaiCompatibleApiKey,
-			baseUrl: settings.openaiCompatibleBaseUrl,
-		});
-	}
-
-	return configs;
-}
-
-function createAIProviderRegistry(configs: ReturnType<typeof buildProviderConfigs>, settings: AISettings) {
-	const providers: Parameters<typeof createProviderRegistry>[0] = {};
-
-	for (const config of configs) {
-		switch (config.type) {
-			case 'openai':
-				providers['openai'] = createOpenAI({ apiKey: config.apiKey });
-				break;
-			case 'anthropic':
-				providers['anthropic'] = createOpenAI({
-					apiKey: config.apiKey,
-					baseURL: 'https://api.anthropic.com/v1',
-				});
-				break;
-			case 'google':
-				providers['google'] = createGoogleGenerativeAI({ apiKey: config.apiKey });
-				break;
-			case 'openai-compatible':
-				if (config.baseUrl) {
-					const customHeaders = Object.fromEntries(
-						settings.openaiCompatibleHeaders?.map(({ header, value }) => [header, value]) ?? [],
-					);
-
-					providers['openai-compatible'] = createOpenAICompatible({
-						name: settings.openaiCompatibleName ?? 'openai-compatible',
-						apiKey: config.apiKey,
-						baseURL: config.baseUrl,
-						headers: customHeaders,
-					});
-				}
-				break;
-		}
-	}
-
-	return createProviderRegistry(providers);
-}
-
 export default defineHook(({ filter }, context) => {
 	const { services, getSchema, logger, database } = context;
 
-	let cachedAISettings: AISettings | null = null;
-	let cacheTime = 0;
-	const CACHE_DURATION = 60000;
+	function buildProviderConfigs(settings: AISettings) {
+		const configs = [];
 
-	async function getAISettings(): Promise<AISettings> {
-		const now = Date.now();
-
-		if (cachedAISettings && now - cacheTime < CACHE_DURATION) {
-			return cachedAISettings;
-		}
-
-		try {
-			const schema = await getSchema();
-			const settingsService = new services.SettingsService({
-				schema,
-				knex: database,
-			} as AbstractServiceOptions);
-
-			const settings = await settingsService.readSingleton({
-				fields: [
-					'ai_openai_api_key',
-					'ai_anthropic_api_key',
-					'ai_google_api_key',
-					'ai_openai_compatible_api_key',
-					'ai_openai_compatible_base_url',
-					'ai_openai_compatible_name',
-					'ai_openai_compatible_models',
-					'ai_openai_compatible_headers',
-					'ai_openai_allowed_models',
-					'ai_anthropic_allowed_models',
-					'ai_google_allowed_models',
-					'ai_system_prompt',
-				],
+		if (settings.openaiApiKey) {
+			configs.push({
+				type: 'openai' as const,
+				apiKey: settings.openaiApiKey,
 			});
-
-			cachedAISettings = {
-				openaiApiKey: settings['ai_openai_api_key'] ?? null,
-				anthropicApiKey: settings['ai_anthropic_api_key'] ?? null,
-				googleApiKey: settings['ai_google_api_key'] ?? null,
-				openaiCompatibleApiKey: settings['ai_openai_compatible_api_key'] ?? null,
-				openaiCompatibleBaseUrl: settings['ai_openai_compatible_base_url'] ?? null,
-				openaiCompatibleName: settings['ai_openai_compatible_name'] ?? null,
-				openaiCompatibleModels: settings['ai_openai_compatible_models'] ?? null,
-				openaiCompatibleHeaders: settings['ai_openai_compatible_headers'] ?? null,
-				openaiAllowedModels: settings['ai_openai_allowed_models'] ?? null,
-				anthropicAllowedModels: settings['ai_anthropic_allowed_models'] ?? null,
-				googleAllowedModels: settings['ai_google_allowed_models'] ?? null,
-				systemPrompt: settings['ai_system_prompt'] ?? null,
-			};
-
-			cacheTime = now;
-
-			return cachedAISettings;
-		} catch (error) {
-			logger.error('Failed to load AI settings:', error);
-			return {
-				openaiApiKey: null,
-				anthropicApiKey: null,
-				googleApiKey: null,
-				openaiCompatibleApiKey: null,
-				openaiCompatibleBaseUrl: null,
-				openaiCompatibleName: null,
-				openaiCompatibleModels: null,
-				openaiCompatibleHeaders: null,
-				openaiAllowedModels: null,
-				anthropicAllowedModels: null,
-				googleAllowedModels: null,
-				systemPrompt: null,
-			};
 		}
+
+		if (settings.anthropicApiKey) {
+			configs.push({
+				type: 'anthropic' as const,
+				apiKey: settings.anthropicApiKey,
+			});
+		}
+
+		if (settings.googleApiKey) {
+			configs.push({
+				type: 'google' as const,
+				apiKey: settings.googleApiKey,
+			});
+		}
+
+		if (settings.openaiCompatibleApiKey && settings.openaiCompatibleBaseUrl) {
+			configs.push({
+				type: 'openai-compatible' as const,
+				apiKey: settings.openaiCompatibleApiKey,
+				baseUrl: settings.openaiCompatibleBaseUrl,
+			});
+		}
+
+		return configs;
+	}
+
+	function createAIProviderRegistry(configs: ReturnType<typeof buildProviderConfigs>, settings: AISettings) {
+		const providers: Parameters<typeof createProviderRegistry>[0] = {};
+
+		for (const config of configs) {
+			switch (config.type) {
+				case 'openai':
+					providers['openai'] = createOpenAI({ apiKey: config.apiKey });
+					break;
+				case 'anthropic':
+					providers['anthropic'] = createAnthropic({ apiKey: config.apiKey });
+					break;
+				case 'google':
+					providers['google'] = createGoogleGenerativeAI({ apiKey: config.apiKey });
+					break;
+				case 'openai-compatible':
+					if (config.baseUrl) {
+						const customHeaders = Object.fromEntries(
+							settings.openaiCompatibleHeaders?.map(({ header, value }) => [header, value]) ?? [],
+						);
+
+						providers['openai-compatible'] = createOpenAICompatible({
+							name: settings.openaiCompatibleName ?? 'openai-compatible',
+							apiKey: config.apiKey,
+							baseURL: config.baseUrl,
+							headers: customHeaders,
+						});
+					}
+					break;
+			}
+		}
+
+		return createProviderRegistry(providers);
 	}
 
 	async function generateWithAI(
@@ -249,7 +174,42 @@ export default defineHook(({ filter }, context) => {
 				return payload;
 			}
 
-			const aiSettings = await getAISettings();
+			const settingsService = new services.SettingsService({
+				schema,
+				knex: database,
+			} as AbstractServiceOptions);
+
+			const settings = await settingsService.readSingleton({
+				fields: [
+					'ai_openai_api_key',
+					'ai_anthropic_api_key',
+					'ai_google_api_key',
+					'ai_openai_compatible_api_key',
+					'ai_openai_compatible_base_url',
+					'ai_openai_compatible_name',
+					'ai_openai_compatible_models',
+					'ai_openai_compatible_headers',
+					'ai_openai_allowed_models',
+					'ai_anthropic_allowed_models',
+					'ai_google_allowed_models',
+					'ai_system_prompt',
+				],
+			});
+
+			const aiSettings: AISettings = {
+				openaiApiKey: settings['ai_openai_api_key'] ?? null,
+				anthropicApiKey: settings['ai_anthropic_api_key'] ?? null,
+				googleApiKey: settings['ai_google_api_key'] ?? null,
+				openaiCompatibleApiKey: settings['ai_openai_compatible_api_key'] ?? null,
+				openaiCompatibleBaseUrl: settings['ai_openai_compatible_base_url'] ?? null,
+				openaiCompatibleName: settings['ai_openai_compatible_name'] ?? null,
+				openaiCompatibleModels: settings['ai_openai_compatible_models'] ?? null,
+				openaiCompatibleHeaders: settings['ai_openai_compatible_headers'] ?? null,
+				openaiAllowedModels: settings['ai_openai_allowed_models'] ?? null,
+				anthropicAllowedModels: settings['ai_anthropic_allowed_models'] ?? null,
+				googleAllowedModels: settings['ai_google_allowed_models'] ?? null,
+				systemPrompt: settings['ai_system_prompt'] ?? null,
+			};
 
 			const hasAnyProvider =
 				aiSettings.openaiApiKey ||
