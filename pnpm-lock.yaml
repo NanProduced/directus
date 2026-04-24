@@ -1978,6 +1978,37 @@ importers:
         specifier: workspace:*
         version: link:../packages/update-check
 
+  extensions/directus-extension-ai-auto-field:
+    dependencies:
+      '@ai-sdk/google':
+        specifier: 'catalog:'
+        version: 3.0.43(zod@4.1.12)
+      '@ai-sdk/openai':
+        specifier: 'catalog:'
+        version: 3.0.41(zod@4.1.12)
+      '@ai-sdk/openai-compatible':
+        specifier: 'catalog:'
+        version: 2.0.35(zod@4.1.12)
+      '@directus/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
+      '@directus/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      ai:
+        specifier: 'catalog:'
+        version: 6.0.116(zod@4.1.12)
+    devDependencies:
+      '@directus/extensions-sdk':
+        specifier: workspace:*
+        version: link:../../packages/extensions-sdk
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vue:
+        specifier: 'catalog:'
+        version: 3.5.24(typescript@5.9.3)
+
   packages/ai:
     devDependencies:
       '@directus/tsconfig':

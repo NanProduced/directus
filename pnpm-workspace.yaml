@@ -3,6 +3,7 @@ packages:
   - app
   - api
   - sdk
+  - extensions/*
   - packages/*
   - tests/*
 

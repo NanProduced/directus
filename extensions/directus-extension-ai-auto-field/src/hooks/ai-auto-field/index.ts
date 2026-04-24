@@ -1,11 +1,27 @@
 import { defineHook } from '@directus/extensions-sdk';
-import type { FilterHandler } from '@directus/types';
+import type { FilterHandler, AbstractServiceOptions } from '@directus/types';
 import type { ProviderType } from '@directus/ai';
+import type { OpenAICompatibleHeader, OpenAICompatibleModel } from '@directus/ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { streamText } from 'ai';
+import { createProviderRegistry, streamText } from 'ai';
 import { parseTemplate } from './utils/template-parser.js';
+
+interface AISettings {
+	openaiApiKey: string | null;
+	anthropicApiKey: string | null;
+	googleApiKey: string | null;
+	openaiCompatibleApiKey: string | null;
+	openaiCompatibleBaseUrl: string | null;
+	openaiCompatibleName: string | null;
+	openaiCompatibleModels: OpenAICompatibleModel[] | null;
+	openaiCompatibleHeaders: OpenAICompatibleHeader[] | null;
+	openaiAllowedModels: string[] | null;
+	anthropicAllowedModels: string[] | null;
+	googleAllowedModels: string[] | null;
+	systemPrompt: string | null;
+}
 
 interface AIAutoFieldOptions {
 	promptTemplate?: string;
@@ -27,63 +43,170 @@ interface FieldWithMeta {
 	} | null;
 }
 
-export default defineHook(({ filter }, context) => {
-	const { getSchema, logger, env } = context;
+function buildProviderConfigs(settings: AISettings) {
+	const configs = [];
 
-	const getLanguageModel = (provider: ProviderType, model: string) => {
-		switch (provider) {
-			case 'openai': {
-				const apiKey = env['AI_OPENAI_API_KEY'] as string;
-				if (!apiKey) {
-					throw new Error('OpenAI API key not configured');
-				}
-				const openai = createOpenAI({ apiKey });
-				return openai(model);
-			}
-			case 'anthropic': {
-				const apiKey = env['AI_ANTHROPIC_API_KEY'] as string;
-				if (!apiKey) {
-					throw new Error('Anthropic API key not configured');
-				}
-				const anthropic = createOpenAI({
-					apiKey,
+	if (settings.openaiApiKey) {
+		configs.push({
+			type: 'openai' as const,
+			apiKey: settings.openaiApiKey,
+		});
+	}
+
+	if (settings.anthropicApiKey) {
+		configs.push({
+			type: 'anthropic' as const,
+			apiKey: settings.anthropicApiKey,
+		});
+	}
+
+	if (settings.googleApiKey) {
+		configs.push({
+			type: 'google' as const,
+			apiKey: settings.googleApiKey,
+		});
+	}
+
+	if (settings.openaiCompatibleApiKey && settings.openaiCompatibleBaseUrl) {
+		configs.push({
+			type: 'openai-compatible' as const,
+			apiKey: settings.openaiCompatibleApiKey,
+			baseUrl: settings.openaiCompatibleBaseUrl,
+		});
+	}
+
+	return configs;
+}
+
+function createAIProviderRegistry(configs: ReturnType<typeof buildProviderConfigs>, settings: AISettings) {
+	const providers: Parameters<typeof createProviderRegistry>[0] = {};
+
+	for (const config of configs) {
+		switch (config.type) {
+			case 'openai':
+				providers['openai'] = createOpenAI({ apiKey: config.apiKey });
+				break;
+			case 'anthropic':
+				providers['anthropic'] = createOpenAI({
+					apiKey: config.apiKey,
 					baseURL: 'https://api.anthropic.com/v1',
 				});
-				return anthropic(model);
-			}
-			case 'google': {
-				const apiKey = env['AI_GOOGLE_API_KEY'] as string;
-				if (!apiKey) {
-					throw new Error('Google API key not configured');
-				}
-				const google = createGoogleGenerativeAI({ apiKey });
-				return google(model);
-			}
-			case 'openai-compatible': {
-				const apiKey = env['AI_OPENAI_COMPATIBLE_API_KEY'] as string;
-				const baseUrl = env['AI_OPENAI_COMPATIBLE_BASE_URL'] as string;
-				if (!apiKey || !baseUrl) {
-					throw new Error('OpenAI compatible API key or base URL not configured');
-				}
-				const openaiCompatible = createOpenAICompatible({
-					apiKey,
-					baseURL: baseUrl,
-				});
-				return openaiCompatible(model);
-			}
-			default:
-				throw new Error(`Unsupported AI provider: ${provider}`);
-		}
-	};
+				break;
+			case 'google':
+				providers['google'] = createGoogleGenerativeAI({ apiKey: config.apiKey });
+				break;
+			case 'openai-compatible':
+				if (config.baseUrl) {
+					const customHeaders = Object.fromEntries(
+						settings.openaiCompatibleHeaders?.map(({ header, value }) => [header, value]) ?? [],
+					);
 
-	const generateWithAI = async (
+					providers['openai-compatible'] = createOpenAICompatible({
+						name: settings.openaiCompatibleName ?? 'openai-compatible',
+						apiKey: config.apiKey,
+						baseURL: config.baseUrl,
+						headers: customHeaders,
+					});
+				}
+				break;
+		}
+	}
+
+	return createProviderRegistry(providers);
+}
+
+export default defineHook(({ filter }, context) => {
+	const { services, getSchema, logger, database } = context;
+
+	let cachedAISettings: AISettings | null = null;
+	let cacheTime = 0;
+	const CACHE_DURATION = 60000;
+
+	async function getAISettings(): Promise<AISettings> {
+		const now = Date.now();
+
+		if (cachedAISettings && now - cacheTime < CACHE_DURATION) {
+			return cachedAISettings;
+		}
+
+		try {
+			const schema = await getSchema();
+			const settingsService = new services.SettingsService({
+				schema,
+				knex: database,
+			} as AbstractServiceOptions);
+
+			const settings = await settingsService.readSingleton({
+				fields: [
+					'ai_openai_api_key',
+					'ai_anthropic_api_key',
+					'ai_google_api_key',
+					'ai_openai_compatible_api_key',
+					'ai_openai_compatible_base_url',
+					'ai_openai_compatible_name',
+					'ai_openai_compatible_models',
+					'ai_openai_compatible_headers',
+					'ai_openai_allowed_models',
+					'ai_anthropic_allowed_models',
+					'ai_google_allowed_models',
+					'ai_system_prompt',
+				],
+			});
+
+			cachedAISettings = {
+				openaiApiKey: settings['ai_openai_api_key'] ?? null,
+				anthropicApiKey: settings['ai_anthropic_api_key'] ?? null,
+				googleApiKey: settings['ai_google_api_key'] ?? null,
+				openaiCompatibleApiKey: settings['ai_openai_compatible_api_key'] ?? null,
+				openaiCompatibleBaseUrl: settings['ai_openai_compatible_base_url'] ?? null,
+				openaiCompatibleName: settings['ai_openai_compatible_name'] ?? null,
+				openaiCompatibleModels: settings['ai_openai_compatible_models'] ?? null,
+				openaiCompatibleHeaders: settings['ai_openai_compatible_headers'] ?? null,
+				openaiAllowedModels: settings['ai_openai_allowed_models'] ?? null,
+				anthropicAllowedModels: settings['ai_anthropic_allowed_models'] ?? null,
+				googleAllowedModels: settings['ai_google_allowed_models'] ?? null,
+				systemPrompt: settings['ai_system_prompt'] ?? null,
+			};
+
+			cacheTime = now;
+
+			return cachedAISettings;
+		} catch (error) {
+			logger.error('Failed to load AI settings:', error);
+			return {
+				openaiApiKey: null,
+				anthropicApiKey: null,
+				googleApiKey: null,
+				openaiCompatibleApiKey: null,
+				openaiCompatibleBaseUrl: null,
+				openaiCompatibleName: null,
+				openaiCompatibleModels: null,
+				openaiCompatibleHeaders: null,
+				openaiAllowedModels: null,
+				anthropicAllowedModels: null,
+				googleAllowedModels: null,
+				systemPrompt: null,
+			};
+		}
+	}
+
+	async function generateWithAI(
+		aiSettings: AISettings,
 		provider: ProviderType,
 		model: string,
 		prompt: string,
 		temperature: number,
 		maxTokens: number
-	): Promise<string> => {
-		const languageModel = getLanguageModel(provider, model);
+	): Promise<string> {
+		const configs = buildProviderConfigs(aiSettings);
+		const providerConfig = configs.find((c) => c.type === provider);
+
+		if (!providerConfig) {
+			throw new Error(`AI provider ${provider} is not configured`);
+		}
+
+		const registry = createAIProviderRegistry(configs, aiSettings);
+		const languageModel = registry.languageModel(`${provider}:${model}`);
 
 		const result = await streamText({
 			model: languageModel,
@@ -93,7 +216,7 @@ export default defineHook(({ filter }, context) => {
 		});
 
 		return result.text;
-	};
+	}
 
 	const handleItemsEvent: FilterHandler<Record<string, unknown>> = async (
 		payload,
@@ -123,6 +246,19 @@ export default defineHook(({ filter }, context) => {
 			}
 
 			if (aiAutoFields.length === 0) {
+				return payload;
+			}
+
+			const aiSettings = await getAISettings();
+
+			const hasAnyProvider =
+				aiSettings.openaiApiKey ||
+				aiSettings.anthropicApiKey ||
+				aiSettings.googleApiKey ||
+				(aiSettings.openaiCompatibleApiKey && aiSettings.openaiCompatibleBaseUrl);
+
+			if (!hasAnyProvider) {
+				logger.warn('No AI providers configured in Directus settings. Skipping AI generation.');
 				return payload;
 			}
 
@@ -169,6 +305,7 @@ export default defineHook(({ filter }, context) => {
 
 				try {
 					const generatedText = await generateWithAI(
+						aiSettings,
 						aiProvider,
 						aiModel,
 						processedPrompt,
